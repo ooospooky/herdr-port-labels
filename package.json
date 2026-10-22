@@ -1,0 +1,12 @@
+{
+  "name": "herdr-port-labels",
+  "version": "0.1.0",
+  "type": "module",
+  "engines": { "node": ">=22.18" },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "tsc --noEmit && node --test"
+  },
+  "devDependencies": { "@types/node": "^22", "typescript": "^7.0.2" },
+  "license": "MIT"
+}
