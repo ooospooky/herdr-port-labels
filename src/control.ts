@@ -13,12 +13,26 @@ export interface ControlIdentity {
   pluginRoot: string;
 }
 
+export interface ServerPane {
+  pane_id: string;
+  ports: number[];
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
 function isControlIdentity(value: unknown): value is ControlIdentity {
   return isRecord(value) && typeof value.version === "string" && typeof value.pluginRoot === "string";
+}
+
+function isServerPane(value: unknown): value is ServerPane {
+  return (
+    isRecord(value) &&
+    typeof value.pane_id === "string" &&
+    Array.isArray(value.ports) &&
+    value.ports.every((port) => typeof port === "number")
+  );
 }
 
 export function controlSocketPath(stateDir: string, herdrSocketPath: string): string {
@@ -33,6 +47,7 @@ export async function startControlServer(
   socketPath: string,
   identity: ControlIdentity,
   onQuit: () => void,
+  listServers: () => ServerPane[] = () => [],
 ): Promise<{ close(): Promise<void> }> {
   if (await queryControl(socketPath)) {
     throw Object.assign(new Error(`a watcher already answers on ${socketPath}`), { code: "already_running" });
@@ -66,6 +81,8 @@ export async function startControlServer(
     const op = isRecord(message) ? message.op : undefined;
     if (op === "version") {
       socket.write(`${JSON.stringify(identity)}\n`);
+    } else if (op === "servers") {
+      socket.write(`${JSON.stringify({ panes: listServers() })}\n`);
     } else if (op === "quit") {
       socket.write(`${JSON.stringify({ ok: true })}\n`, () => {
         if (quitRequested) return;
@@ -123,6 +140,12 @@ function sendRequest(socketPath: string, payload: unknown, timeoutMs = REQUEST_T
 export async function queryControl(socketPath: string): Promise<ControlIdentity | null> {
   const reply = await sendRequest(socketPath, { op: "version" });
   return isControlIdentity(reply) ? reply : null;
+}
+
+export async function queryServers(socketPath: string): Promise<ServerPane[] | null> {
+  const reply = await sendRequest(socketPath, { op: "servers" });
+  if (!isRecord(reply) || !Array.isArray(reply.panes) || !reply.panes.every(isServerPane)) return null;
+  return reply.panes;
 }
 
 export async function requestQuit(socketPath: string, timeoutMs = 3000): Promise<void> {
