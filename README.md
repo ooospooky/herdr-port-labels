@@ -46,6 +46,24 @@ Requirements:
 - **Pane border.** `⚡ 5174`, or `⚡ 5174 | api` when you named the pane `api`. herdr draws borders only around split panes. For a lone pane, set `ui.pane_borders = "always"`.
 - **Sidebar.** The row of the Space, which the API calls a workspace, lists every port in that Space after a ⚡. A Space without a server shows nothing there.
 
+## Jump to a server
+
+The plugin adds an action that opens a popup listing every pane with a server, one row per pane: its ports, Space, tab, and pane name. The current Space comes first, then the others in sidebar order. Move with ↑↓ or j/k, press Enter to switch to that pane, along with its Space and tab, or press Esc or q to close the popup without changing anything.
+
+![The jump popup over herdr. It lists 5174 and 4173 in the shop-web Space's dev tab, then 8080 in the shop-api Space, with the cursor on the first row.](docs/jump-to-server.png)
+
+Bind it to a key in `~/.config/herdr/config.toml`, then run `herdr config check && herdr server reload-config`:
+
+```toml
+[[keys.command]]
+key = "prefix+shift+s"
+type = "plugin_action"
+command = "ooospooky.port-labels.servers"
+description = "jump to a dev server"
+```
+
+The list is what the watcher saw in its last scan, at most 5 seconds old. If the popup says the watcher is not running, open a new pane to start it. The same message shows right after an update, until the next pane replaces the old watcher.
+
 ## What it detects
 
 A TCP port in the `LISTEN` state whose process descends from a pane's shell. The watcher runs `lsof -nP -iTCP -sTCP:LISTEN` and `ps -A -o pid=,ppid=`, then walks each listener's parent chain up to a pane shell. It never looks at the command name.
@@ -69,7 +87,7 @@ Tested together on herdr 0.9.5. [herdr-automatic-rename](https://github.com/qu8n
 
 ## How it works
 
-The `[[startup]]` hook and every `pane.created` event run `scripts/with-node.sh src/ensure-watch.ts`. `ensure-watch.ts` starts one `src/watch.ts` per herdr server. It replaces the watcher when the plugin version or install path changes, so an update takes over when the next pane opens. The watcher subscribes to herdr's pane, tab, and workspace events, scans every 5 seconds and 300 ms after an event, and writes the difference through `tab.rename`, `pane.rename`, and `workspace.report_metadata`. The sidebar token has a 25 second TTL, so it also disappears when the watcher dies. The watcher exits when herdr goes away or the plugin is disabled or removed. It logs to `watch.log` in `~/.local/state/herdr/plugins/ooospooky.port-labels`, or the same path under `$XDG_STATE_HOME`.
+The `[[startup]]` hook and every `pane.created` event run `scripts/with-node.sh src/ensure-watch.ts`. `ensure-watch.ts` starts one `src/watch.ts` per herdr server. It replaces the watcher when the plugin version or install path changes, so an update takes over when the next pane opens. The watcher subscribes to herdr's pane, tab, and workspace events, scans every 5 seconds and 300 ms after an event, and writes the difference through `tab.rename`, `pane.rename`, and `workspace.report_metadata`. The sidebar token has a 25 second TTL, so it also disappears when the watcher dies. The jump popup asks the watcher for its pane-to-port attribution over the same control socket that `ensure-watch.ts` uses, and asks herdr for the Space, tab, and pane names. The watcher exits when herdr goes away or the plugin is disabled or removed. It logs to `watch.log` in `~/.local/state/herdr/plugins/ooospooky.port-labels`, or the same path under `$XDG_STATE_HOME`.
 
 ## If nothing shows up
 

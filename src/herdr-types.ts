@@ -1,18 +1,23 @@
 // Shapes copied from `herdr api schema --json` (protocol 22); subscriptions are dotted, event payloads underscored
 export interface PaneInfo { pane_id: string; tab_id: string; workspace_id: string; label?: string | null }
-export interface TabInfo { tab_id: string; workspace_id: string; label: string }
+export interface TabInfo { tab_id: string; workspace_id: string; label: string; number: number }
+export interface WorkspaceWorktreeInfo { repo_key: string; is_linked_worktree: boolean }
+export interface WorkspaceInfo { workspace_id: string; label: string; number: number; focused: boolean; worktree?: WorkspaceWorktreeInfo | null }
 export interface PaneProcessInfo { pane_id: string; shell_pid?: number | null }
 export interface InstalledPluginInfo { plugin_id: string; enabled: boolean }
 export interface PaneListResult { type: "pane_list"; panes: PaneInfo[] }
 export interface TabListResult { type: "tab_list"; tabs: TabInfo[] }
+export interface WorkspaceListResult { type: "workspace_list"; workspaces: WorkspaceInfo[] }
 export interface PaneProcessInfoResult { type: "pane_process_info"; process_info: PaneProcessInfo }
 export interface PluginListResult { type: "plugin_list"; plugins: InstalledPluginInfo[] }
 export interface HerdrErrorBody { code: string; message: string }
 export interface HerdrMethods {
   "pane.list": { params: { workspace_id?: string | null }; result: PaneListResult };
   "tab.list": { params: { workspace_id?: string | null }; result: TabListResult };
+  "workspace.list": { params: Record<string, never>; result: WorkspaceListResult };
   "pane.process_info": { params: { pane_id?: string | null }; result: PaneProcessInfoResult };
   "plugin.list": { params: { plugin_id?: string | null }; result: PluginListResult };
+  "pane.focus": { params: { pane_id: string }; result: unknown };
   "pane.rename": { params: { pane_id: string; label: string | null }; result: unknown };
   "tab.rename": { params: { tab_id: string; label: string }; result: unknown };
   "workspace.report_metadata": { params: { workspace_id: string; source: string; tokens: Record<string, string | null>; ttl_ms?: number }; result: unknown };
