@@ -8,6 +8,7 @@ import type { HerdrEvent, SubscriptionType } from "./herdr-types.ts";
 import { reconcile, emptyMemory } from "./reconcile.ts";
 import type { Memory, PaneSnapshot, TabSnapshot } from "./reconcile.ts";
 import { controlSocketPath, startControlServer } from "./control.ts";
+import type { ServerPane } from "./control.ts";
 
 const SUBSCRIBED_EVENTS: SubscriptionType[] = ["pane.created", "pane.closed", "pane.exited", "tab.renamed", "tab.closed", "workspace.closed"];
 const SHELL_GONE_EVENTS = new Set<HerdrEvent["event"]>(["pane_closed", "pane_exited"]);
@@ -28,6 +29,7 @@ const controlPath = controlSocketPath(stateDir, herdrSocketPath);
 
 let client: HerdrClient;
 let memory: Memory = emptyMemory();
+let latestPortsByPane = new Map<string, number[]>();
 const shellPidByPane = new Map<string, number>();
 let controlServer: { close(): Promise<void> };
 let controlSocketInode: number;
@@ -97,7 +99,12 @@ async function scanOnce(): Promise<void> {
   const paneByShellPid = await refreshShellPids(panes);
   const tabs = await listTabs();
   const [listeners, parentOf] = await Promise.all([listListeners(), listProcessTree()]);
-  await publish(panes, tabs, attributePorts(listeners, parentOf, paneByShellPid));
+  latestPortsByPane = attributePorts(listeners, parentOf, paneByShellPid);
+  await publish(panes, tabs, latestPortsByPane);
+}
+
+function listServers(): ServerPane[] {
+  return [...latestPortsByPane].map(([paneId, ports]) => ({ pane_id: paneId, ports }));
 }
 
 async function runQueuedTicks(): Promise<void> {
@@ -146,7 +153,7 @@ async function shutdown(reason: string): Promise<void> {
 
 await mkdir(stateDir, { recursive: true });
 try {
-  controlServer = await startControlServer(controlPath, { version, pluginRoot }, () => void shutdown("quit requested"));
+  controlServer = await startControlServer(controlPath, { version, pluginRoot }, () => void shutdown("quit requested"), listServers);
 } catch (error) {
   if (!(error instanceof Error && "code" in error && error.code === "already_running")) throw error;
   log("another watcher is running");

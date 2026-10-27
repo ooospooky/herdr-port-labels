@@ -123,11 +123,18 @@ test("hands the caller's stdin to a node found in a version directory", async ()
   assert.equal(result.out, "stdin=[PAYLOAD]\n");
 });
 
-test("the manifest routes every command through with-node.sh", () => {
+test("the manifest runs every TypeScript command through with-node.sh and opens the popup without it", () => {
   const manifest = readFileSync(new URL("../herdr-plugin.toml", import.meta.url), "utf8");
   const commands = [...manifest.matchAll(/^command = (\[.*\])$/gm)].map((match) => JSON.parse(match[1] ?? "[]") as string[]);
-  assert.equal(commands.length, 3);
-  for (const command of commands) assert.deepEqual(command.slice(0, 2), ["sh", "scripts/with-node.sh"]);
-  assert.equal(commands.filter((command) => command[2] === "src/ensure-watch.ts").length, 2);
-  assert.equal(commands.filter((command) => command[2] === "--version").length, 1);
+  assert.equal(commands.length, 5);
+  const viaShim = commands.filter((command) => command[0] === "sh" && command[1] === "scripts/with-node.sh");
+  for (const command of commands.filter((entry) => entry.some((argument) => argument.endsWith(".ts")))) {
+    assert.ok(viaShim.includes(command), `${JSON.stringify(command)} skips with-node.sh`);
+  }
+  assert.equal(viaShim.filter((command) => command[2] === "src/ensure-watch.ts").length, 2);
+  assert.equal(viaShim.filter((command) => command[2] === "src/servers-popup.ts").length, 1);
+  assert.equal(viaShim.filter((command) => command[2] === "--version").length, 1);
+  const withoutShim = commands.filter((command) => !viaShim.includes(command));
+  assert.equal(withoutShim.length, 1);
+  assert.match(withoutShim[0]?.join(" ") ?? "", /plugin pane open --plugin ooospooky\.port-labels --entrypoint servers --focus/);
 });

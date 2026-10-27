@@ -5,16 +5,16 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
-import { controlSocketPath, startControlServer, queryControl, requestQuit } from "../src/control.ts";
-import type { ControlIdentity } from "../src/control.ts";
+import { controlSocketPath, startControlServer, queryControl, queryServers, requestQuit } from "../src/control.ts";
+import type { ControlIdentity, ServerPane } from "../src/control.ts";
 
 const identity: ControlIdentity = { version: "0.1.0", pluginRoot: "/plugins/herdr-port-labels" };
 const handles: Array<{ close(): Promise<void> }> = [];
 
 const tmpSocketPath = () => path.join(os.tmpdir(), `herdr-control-${randomBytes(6).toString("hex")}.sock`);
 
-async function startTracked(socketPath: string, onQuit: () => void = () => {}) {
-  const handle = await startControlServer(socketPath, identity, onQuit);
+async function startTracked(socketPath: string, onQuit: () => void = () => {}, listServers?: () => ServerPane[]) {
+  const handle = await startControlServer(socketPath, identity, onQuit, listServers);
   handles.push(handle);
   return handle;
 }
@@ -128,4 +128,57 @@ test("requestQuit resolves at the timeout when the server stays up", async () =>
   await requestQuit(socketPath, 300);
   assert.ok(Date.now() - startedAt >= 300);
   assert.deepEqual(await queryControl(socketPath), identity);
+});
+
+test("the servers op answers what listServers returns at the time of the request", async () => {
+  const socketPath = tmpSocketPath();
+  let current: ServerPane[] = [{ pane_id: "w3:p2", ports: [5173, 5174] }];
+  await startTracked(socketPath, () => {}, () => current);
+
+  assert.deepEqual(await sendLine(socketPath, { op: "servers" }), { panes: [{ pane_id: "w3:p2", ports: [5173, 5174] }] });
+  current = [{ pane_id: "w1:p1", ports: [3000] }];
+  assert.deepEqual(await sendLine(socketPath, { op: "servers" }), { panes: [{ pane_id: "w1:p1", ports: [3000] }] });
+  assert.deepEqual(await sendLine(socketPath, { op: "bogus" }), { error: "unknown_op" });
+});
+
+test("the servers op answers an empty list when the watcher passes no listServers", async () => {
+  const socketPath = tmpSocketPath();
+  await startTracked(socketPath);
+  assert.deepEqual(await sendLine(socketPath, { op: "servers" }), { panes: [] });
+});
+
+test("queryServers returns null when nothing listens", async () => {
+  assert.equal(await queryServers(tmpSocketPath()), null);
+});
+
+test("queryServers returns null for an older watcher that does not know the servers op", async () => {
+  const socketPath = tmpSocketPath();
+  const olderWatcher = net.createServer((socket) => {
+    socket.on("data", () => socket.write(`${JSON.stringify({ error: "unknown_op" })}\n`));
+  });
+  await new Promise<void>((resolve) => olderWatcher.listen(socketPath, resolve));
+  try {
+    assert.equal(await queryServers(socketPath), null);
+  } finally {
+    await new Promise<void>((resolve) => olderWatcher.close(() => resolve()));
+  }
+});
+
+test("queryServers returns null for a reply that is not a pane list", async () => {
+  const socketPath = tmpSocketPath();
+  const oddWatcher = net.createServer((socket) => {
+    socket.on("data", () => socket.write(`${JSON.stringify({ panes: [{ pane_id: "w1:p1", ports: ["5173"] }] })}\n`));
+  });
+  await new Promise<void>((resolve) => oddWatcher.listen(socketPath, resolve));
+  try {
+    assert.equal(await queryServers(socketPath), null);
+  } finally {
+    await new Promise<void>((resolve) => oddWatcher.close(() => resolve()));
+  }
+});
+
+test("queryServers returns the panes of a current watcher", async () => {
+  const socketPath = tmpSocketPath();
+  await startTracked(socketPath, () => {}, () => [{ pane_id: "w3:p2", ports: [5173] }]);
+  assert.deepEqual(await queryServers(socketPath), [{ pane_id: "w3:p2", ports: [5173] }]);
 });
