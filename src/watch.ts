@@ -38,6 +38,7 @@ let debounceTimer: ReturnType<typeof setTimeout> | undefined;
 let tickInFlight: Promise<void> | null = null;
 let tickQueued = false;
 let shuttingDown = false;
+let lastScanFailure: string | null = null;
 
 async function listPanes(): Promise<PaneSnapshot[]> {
   const { panes } = await client.request("pane.list", {});
@@ -66,6 +67,21 @@ async function refreshShellPids(panes: PaneSnapshot[]): Promise<Map<number, stri
     }
   }
   return new Map([...shellPidByPane].map(([paneId, shellPid]) => [shellPid, paneId]));
+}
+
+// A failed scan keeps the previous attribution, so labels and tokens stay consistent until lsof and ps answer again
+async function scanPorts(paneByShellPid: Map<number, string>): Promise<Map<string, number[]>> {
+  try {
+    const [listeners, parentOf] = await Promise.all([listListeners(), listProcessTree()]);
+    if (lastScanFailure !== null) log("scan recovered");
+    lastScanFailure = null;
+    return attributePorts(listeners, parentOf, paneByShellPid);
+  } catch (error) {
+    const failure = describeError(error);
+    if (failure !== lastScanFailure) log(`scan failed, keeping the last result: ${failure}`);
+    lastScanFailure = failure;
+    return latestPortsByPane;
+  }
 }
 
 async function publish(panes: PaneSnapshot[], tabs: TabSnapshot[], portsByPane: Map<string, number[]>): Promise<void> {
@@ -98,8 +114,7 @@ async function scanOnce(): Promise<void> {
   const panes = await listPanes();
   const paneByShellPid = await refreshShellPids(panes);
   const tabs = await listTabs();
-  const [listeners, parentOf] = await Promise.all([listListeners(), listProcessTree()]);
-  latestPortsByPane = attributePorts(listeners, parentOf, paneByShellPid);
+  latestPortsByPane = await scanPorts(paneByShellPid);
   await publish(panes, tabs, latestPortsByPane);
 }
 

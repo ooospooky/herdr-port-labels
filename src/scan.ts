@@ -3,7 +3,7 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 const LSOF_NO_MATCH_EXIT_CODE = 1;
-const COMMAND_TIMEOUT_MS = 4000;
+const COMMAND_TIMEOUT_MS = 10000;
 
 export interface Listener {
   pid: number;
@@ -12,8 +12,23 @@ export interface Listener {
 
 export type RunCommand = (file: string, args: string[], options: { timeout: number }) => Promise<{ stdout: string }>;
 
-function isExecError(error: unknown): error is { code: unknown; stdout?: string } {
-  return typeof error === "object" && error !== null && "code" in error;
+interface ExecFailure { code?: unknown; signal?: unknown; killed?: unknown; stdout?: unknown; stderr?: unknown }
+
+function isExecFailure(error: unknown): error is ExecFailure {
+  return typeof error === "object" && error !== null;
+}
+
+// promisified execFile reports a timeout as killed plus a signal with a null code, and says only "Command failed"
+function describeCommandFailure(file: string, error: unknown): Error {
+  if (!isExecFailure(error)) return new Error(`${file} failed: ${String(error)}`);
+  if (typeof error.signal === "string") {
+    return new Error(error.killed === true ? `${file} timed out after ${COMMAND_TIMEOUT_MS} ms (${error.signal})` : `${file} was killed by ${error.signal}`);
+  }
+  if (typeof error.code === "number") {
+    const stderrFirstLine = typeof error.stderr === "string" ? error.stderr.split("\n").find((line) => line.trim() !== "") : undefined;
+    return new Error(`${file} exited ${error.code}${stderrFirstLine === undefined ? "" : `: ${stderrFirstLine}`}`);
+  }
+  return error instanceof Error ? error : new Error(`${file} failed: ${String(error)}`);
 }
 
 export function parseLsofListeners(text: string): Listener[] {
@@ -52,12 +67,16 @@ export async function listListeners(runCommand: RunCommand = execFileAsync): Pro
     return parseLsofListeners(stdout);
   } catch (error) {
     // lsof exits 1 when nothing matches, and also when it only warned about unreadable processes
-    if (isExecError(error) && error.code === LSOF_NO_MATCH_EXIT_CODE) return parseLsofListeners(error.stdout ?? "");
-    throw error;
+    if (isExecFailure(error) && error.code === LSOF_NO_MATCH_EXIT_CODE) return parseLsofListeners(typeof error.stdout === "string" ? error.stdout : "");
+    throw describeCommandFailure("lsof", error);
   }
 }
 
-export async function listProcessTree(): Promise<Map<number, number>> {
-  const { stdout } = await execFileAsync("ps", ["-A", "-o", "pid=,ppid="], { timeout: COMMAND_TIMEOUT_MS });
-  return parsePsTree(stdout);
+export async function listProcessTree(runCommand: RunCommand = execFileAsync): Promise<Map<number, number>> {
+  try {
+    const { stdout } = await runCommand("ps", ["-A", "-o", "pid=,ppid="], { timeout: COMMAND_TIMEOUT_MS });
+    return parsePsTree(stdout);
+  } catch (error) {
+    throw describeCommandFailure("ps", error);
+  }
 }
