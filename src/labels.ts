@@ -51,7 +51,7 @@ export function parsePaneLabel(label: string | null): { ports: number[]; origina
   return { ports: sortedUnique(ports), original: original === "" ? null : original };
 }
 
-export function spaceToken(ports: number[]): string {
+export function portsToken(ports: number[]): string {
   const sorted = sortedUnique(ports);
   const full = BADGE + sorted.join(" ");
   if (full.length <= TOKEN_MAX_LENGTH) return full;

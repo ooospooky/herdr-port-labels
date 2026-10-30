@@ -25,6 +25,13 @@ Any TCP listener started from a pane counts, whatever the command: `vite`, `next
 
    To color the ports, write the token as a table: `{ token = "$dev_servers", fg = "#a6e3a1" }`.
 
+   To also list each agent's ports in the Agents sidebar, add the same token to an agent row. With the default rows:
+
+   ```toml
+   [ui.sidebar.agents]
+   rows = [["state_icon", "machine", "workspace", "tab"], ["agent", "$dev_servers"]]
+   ```
+
 3. Check the config and reload the running server:
 
    ```sh
@@ -45,6 +52,7 @@ Requirements:
 - **Tab.** `⚡ dev`. The prefix goes when the last server in that tab stops.
 - **Pane border.** `⚡ 5174`, or `⚡ 5174 | api` when you named the pane `api`. herdr draws borders only around split panes. For a lone pane, set `ui.pane_borders = "always"`.
 - **Sidebar.** The row of the Space, which the API calls a workspace, lists every port in that Space after a ⚡. A Space without a server shows nothing there.
+- **Agents sidebar.** With `$dev_servers` in an agent row, an agent whose pane runs a server shows its ports on its own row.
 
 ## Jump to a server
 
@@ -63,6 +71,16 @@ description = "jump to a dev server"
 ```
 
 The list is what the watcher saw in its last scan, at most 5 seconds old. If the popup says the watcher is not running, open a new pane to start it. The same message shows right after an update, until the next pane replaces the old watcher.
+
+## Let agents see the ports
+
+Every pane with a server carries a `dev_servers` token, the same one the Agents sidebar shows. `herdr pane list`, `herdr pane get` and `herdr agent list` return it as `tokens.dev_servers`, so an agent running inside herdr can see which ports are taken and by which pane before it starts a server. A line like this in your `CLAUDE.md` or agent instructions is enough:
+
+```
+Before starting a dev server, run `herdr pane list` and pick a port that no pane's `tokens.dev_servers` lists.
+```
+
+The token follows the watcher's scan, so it lags a running server by at most 5 seconds, and it is only there while the watcher runs.
 
 ## What it detects
 
@@ -87,7 +105,7 @@ Tested together on herdr 0.9.5. [herdr-automatic-rename](https://github.com/qu8n
 
 ## How it works
 
-The `[[startup]]` hook and every `pane.created` event run `scripts/with-node.sh src/ensure-watch.ts`. `ensure-watch.ts` starts one `src/watch.ts` per herdr server. It replaces the watcher when the plugin version or install path changes, so an update takes over when the next pane opens. The watcher subscribes to herdr's pane, tab, and workspace events, scans every 5 seconds and 300 ms after an event, and writes the difference through `tab.rename`, `pane.rename`, and `workspace.report_metadata`. The sidebar token has a 25 second TTL, so it also disappears when the watcher dies. The jump popup asks the watcher for its pane-to-port attribution over the same control socket that `ensure-watch.ts` uses, and asks herdr for the Space, tab, and pane names. The watcher exits when herdr goes away or the plugin is disabled or removed. It logs to `watch.log` in `~/.local/state/herdr/plugins/ooospooky.port-labels`, or the same path under `$XDG_STATE_HOME`.
+The `[[startup]]` hook and every `pane.created` event run `scripts/with-node.sh src/ensure-watch.ts`. `ensure-watch.ts` starts one `src/watch.ts` per herdr server. It replaces the watcher when the plugin version or install path changes, so an update takes over when the next pane opens. The watcher subscribes to herdr's pane, tab, and workspace events, scans every 5 seconds and 300 ms after an event, and writes the difference through `tab.rename`, `pane.rename`, `pane.report_metadata`, and `workspace.report_metadata`. The Space token has a 25 second TTL and the pane token 60 seconds, so both also disappear when the watcher dies. The pane token renews less often because herdr re-sends the whole screen to SSH clients on every pane metadata update (herdr issue #4428). The jump popup asks the watcher for its pane-to-port attribution over the same control socket that `ensure-watch.ts` uses, and asks herdr for the Space, tab, and pane names. The watcher exits when herdr goes away or the plugin is disabled or removed. It logs to `watch.log` in `~/.local/state/herdr/plugins/ooospooky.port-labels`, or the same path under `$XDG_STATE_HOME`.
 
 ## If nothing shows up
 
@@ -101,7 +119,7 @@ The `[[startup]]` hook and every `pane.created` event run `scripts/with-node.sh 
 herdr plugin uninstall ooospooky.port-labels
 ```
 
-`herdr plugin disable` and, for a linked checkout, `herdr plugin unlink` work the same way. The watcher notices within 5 seconds, restores the labels it changed, and exits. The `"$dev_servers"` entry can stay in `config.toml`. It renders nothing.
+`herdr plugin disable` and, for a linked checkout, `herdr plugin unlink` work the same way. The watcher notices within 5 seconds, restores the labels it changed, clears its tokens, and exits. The `"$dev_servers"` entry can stay in `config.toml`. It renders nothing.
 
 ## Develop
 
