@@ -19,6 +19,7 @@ export interface HerdrMethods {
   "plugin.list": { params: { plugin_id?: string | null }; result: PluginListResult };
   "pane.focus": { params: { pane_id: string }; result: unknown };
   "pane.rename": { params: { pane_id: string; label: string | null }; result: unknown };
+  "pane.report_metadata": { params: { pane_id: string; source: string; tokens: Record<string, string | null>; ttl_ms?: number }; result: unknown };
   "tab.rename": { params: { tab_id: string; label: string }; result: unknown };
   "workspace.report_metadata": { params: { workspace_id: string; source: string; tokens: Record<string, string | null>; ttl_ms?: number }; result: unknown };
 }

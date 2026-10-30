@@ -1,6 +1,6 @@
 id = "ooospooky.port-labels"
 name = "Port Labels"
-version = "0.2.0"
+version = "0.3.0"
 min_herdr_version = "0.9.0"
 description = "See which herdr Space, tab, and pane has a dev server running: ⚡ on the tab, the port on the pane border, and the ports of each Space in the sidebar"
 platforms = ["linux", "macos"]

@@ -1,16 +1,16 @@
-import { SOURCE, TOKEN_NAME, TTL_MS, RENEW_MS } from "./constants.ts";
+import { SOURCE, TOKEN_NAME, TTL_MS, RENEW_MS, PANE_TOKEN_TTL_MS, PANE_TOKEN_RENEW_MS } from "./constants.ts";
 import type { HerdrOp } from "./herdr-types.ts";
-import { carriesPortLabel, hasBadge, withBadge, withoutBadge, paneLabel, parsePaneLabel, spaceToken } from "./labels.ts";
+import { carriesPortLabel, hasBadge, withBadge, withoutBadge, paneLabel, parsePaneLabel, portsToken } from "./labels.ts";
 
 export interface PaneSnapshot { pane_id: string; tab_id: string; workspace_id: string; label: string | null }
 export interface TabSnapshot { tab_id: string; workspace_id: string; label: string }
 export interface PaneMemory { original: string | null; written: string | null }
 export interface TabMemory { original: string; written: string }
 export interface TokenMemory { token: string; writtenAt: number }
-export interface Memory { panes: Map<string, PaneMemory>; tabs: Map<string, TabMemory>; spaces: Map<string, TokenMemory> }
+export interface Memory { panes: Map<string, PaneMemory>; tabs: Map<string, TabMemory>; spaces: Map<string, TokenMemory>; paneTokens: Map<string, TokenMemory> }
 
 export function emptyMemory(): Memory {
-  return { panes: new Map(), tabs: new Map(), spaces: new Map() };
+  return { panes: new Map(), tabs: new Map(), spaces: new Map(), paneTokens: new Map() };
 }
 
 function currentOriginal<Label extends string | null>(remembered: { original: Label; written: Label } | undefined, label: Label, originalFromLabel: (label: Label) => Label): Label {
@@ -53,28 +53,46 @@ function reconcileTabs(tabs: TabSnapshot[], serverTabIds: Set<string>, memory: M
   }
 }
 
-function reconcileSpaces(portsBySpace: Map<string, number[]>, memory: Memory, nextMemory: Memory, now: number, ops: HerdrOp[]): void {
-  for (const [workspaceId, ports] of portsBySpace) {
-    const remembered = memory.spaces.get(workspaceId);
+interface TokenTarget {
+  memory: Map<string, TokenMemory>;
+  nextMemory: Map<string, TokenMemory>;
+  renewMs: number;
+  reportOp: (id: string, token: string | null) => HerdrOp;
+}
+
+function reconcileTokens(portsById: Map<string, number[]>, now: number, ops: HerdrOp[], { memory, nextMemory, renewMs, reportOp }: TokenTarget): void {
+  for (const [id, ports] of portsById) {
+    const remembered = memory.get(id);
     if (ports.length === 0) {
-      if (remembered !== undefined) ops.push({ method: "workspace.report_metadata", params: { workspace_id: workspaceId, source: SOURCE, tokens: { [TOKEN_NAME]: null } } });
+      if (remembered !== undefined) ops.push(reportOp(id, null));
       continue;
     }
 
-    const token = spaceToken(ports);
-    const isStillFresh = remembered !== undefined && remembered.token === token && now - remembered.writtenAt < RENEW_MS;
+    const token = portsToken(ports);
+    const isStillFresh = remembered !== undefined && remembered.token === token && now - remembered.writtenAt < renewMs;
     if (isStillFresh) {
-      nextMemory.spaces.set(workspaceId, remembered);
+      nextMemory.set(id, remembered);
       continue;
     }
-    ops.push({ method: "workspace.report_metadata", params: { workspace_id: workspaceId, source: SOURCE, tokens: { [TOKEN_NAME]: token }, ttl_ms: TTL_MS } });
-    nextMemory.spaces.set(workspaceId, { token, writtenAt: now });
+    ops.push(reportOp(id, token));
+    nextMemory.set(id, { token, writtenAt: now });
   }
+}
+
+function spaceReportOp(workspaceId: string, token: string | null): HerdrOp {
+  const params = { workspace_id: workspaceId, source: SOURCE, tokens: { [TOKEN_NAME]: token } };
+  return { method: "workspace.report_metadata", params: token === null ? params : { ...params, ttl_ms: TTL_MS } };
+}
+
+function paneReportOp(paneId: string, token: string | null): HerdrOp {
+  const params = { pane_id: paneId, source: SOURCE, tokens: { [TOKEN_NAME]: token } };
+  return { method: "pane.report_metadata", params: token === null ? params : { ...params, ttl_ms: PANE_TOKEN_TTL_MS } };
 }
 
 export function reconcile({ panes, tabs, portsByPane, memory, now }: { panes: PaneSnapshot[]; tabs: TabSnapshot[]; portsByPane: Map<string, number[]>; memory: Memory; now: number }): { ops: HerdrOp[]; memory: Memory } {
   const portsOfPane = (paneId: string): number[] => portsByPane.get(paneId) ?? [];
   const serverTabIds = new Set(panes.filter((pane) => portsOfPane(pane.pane_id).length > 0).map((pane) => pane.tab_id));
+  const portsByLivePane = new Map(panes.map((pane) => [pane.pane_id, portsOfPane(pane.pane_id)]));
   const portsBySpace = new Map<string, number[]>();
   for (const pane of panes) {
     const spacePorts = portsBySpace.get(pane.workspace_id) ?? [];
@@ -85,7 +103,8 @@ export function reconcile({ panes, tabs, portsByPane, memory, now }: { panes: Pa
   const nextMemory = emptyMemory();
   const ops: HerdrOp[] = [];
   reconcilePanes(panes, portsOfPane, memory, nextMemory, ops);
+  reconcileTokens(portsByLivePane, now, ops, { memory: memory.paneTokens, nextMemory: nextMemory.paneTokens, renewMs: PANE_TOKEN_RENEW_MS, reportOp: paneReportOp });
   reconcileTabs(tabs, serverTabIds, memory, nextMemory, ops);
-  reconcileSpaces(portsBySpace, memory, nextMemory, now, ops);
+  reconcileTokens(portsBySpace, now, ops, { memory: memory.spaces, nextMemory: nextMemory.spaces, renewMs: RENEW_MS, reportOp: spaceReportOp });
   return { ops, memory: nextMemory };
 }

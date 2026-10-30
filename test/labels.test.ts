@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { hasBadge, withBadge, withoutBadge, paneLabel, parsePaneLabel, spaceToken } from "../src/labels.ts";
+import { hasBadge, withBadge, withoutBadge, paneLabel, parsePaneLabel, portsToken } from "../src/labels.ts";
 
 test("hasBadge detects the badge anywhere, not a bare badge", () => {
   assert.equal(hasBadge("⚡ 2"), true);
@@ -43,10 +43,10 @@ test("parsePaneLabel sorts and de-duplicates ports, and keeps a bare badge as th
   assert.deepEqual(parsePaneLabel("⚡ 5177 5176 5177 | app"), { ports: [5176, 5177], original: "app" });
   assert.deepEqual(parsePaneLabel("⚡"), { ports: [], original: "⚡" });
 });
-test("spaceToken sorts, and truncates past 80 chars with +n", () => {
-  assert.equal(spaceToken([5177, 5176]), "⚡5176 5177");
+test("portsToken sorts, and truncates past 80 chars with +n", () => {
+  assert.equal(portsToken([5177, 5176]), "⚡5176 5177");
   const many = Array.from({ length: 30 }, (_, index) => 10000 + index);
-  const token = spaceToken(many);
+  const token = portsToken(many);
   assert.ok(token.length <= 80);
   assert.match(token, / \+\d+$/);
 });

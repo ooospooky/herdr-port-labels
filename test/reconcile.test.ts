@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { reconcile, emptyMemory, type Memory } from "../src/reconcile.ts";
 import type { HerdrOp } from "../src/herdr-types.ts";
-import { SOURCE, TTL_MS, RENEW_MS } from "../src/constants.ts";
+import { SOURCE, TTL_MS, RENEW_MS, PANE_TOKEN_TTL_MS, PANE_TOKEN_RENEW_MS } from "../src/constants.ts";
 
 function reportOp(workspaceId: string, token: string): HerdrOp {
   return { method: "workspace.report_metadata", params: { workspace_id: workspaceId, source: SOURCE, tokens: { dev_servers: token }, ttl_ms: TTL_MS } };
@@ -12,11 +12,20 @@ function clearOp(workspaceId: string): HerdrOp {
   return { method: "workspace.report_metadata", params: { workspace_id: workspaceId, source: SOURCE, tokens: { dev_servers: null } } };
 }
 
+function paneTokenOp(paneId: string, token: string): HerdrOp {
+  return { method: "pane.report_metadata", params: { pane_id: paneId, source: SOURCE, tokens: { dev_servers: token }, ttl_ms: PANE_TOKEN_TTL_MS } };
+}
+
+function clearPaneTokenOp(paneId: string): HerdrOp {
+  return { method: "pane.report_metadata", params: { pane_id: paneId, source: SOURCE, tokens: { dev_servers: null } } };
+}
+
 function badgedMemory({ paneOriginal = null, paneWritten = "⚡ 5176", tabOriginal = "2", tabWritten = "⚡ 2", token = "⚡5176", writtenAt = 1000 } = {}): Memory {
   return {
     panes: new Map([["w1:p2", { original: paneOriginal, written: paneWritten }]]),
     tabs: new Map([["w1:t2", { original: tabOriginal, written: tabWritten }]]),
     spaces: new Map([["w1", { token, writtenAt }]]),
+    paneTokens: new Map([["w1:p2", { token, writtenAt }]]),
   };
 }
 
@@ -27,10 +36,12 @@ test("first server: pane, tab and space ops in one pass", () => {
   const { ops, memory } = reconcile({ panes, tabs, portsByPane, memory: emptyMemory(), now: 1000 });
   assert.deepEqual(ops, [
     { method: "pane.rename", params: { pane_id: "w1:p2", label: "⚡ 5176 5177" } },
+    { method: "pane.report_metadata", params: { pane_id: "w1:p2", source: SOURCE, tokens: { dev_servers: "⚡5176 5177" }, ttl_ms: PANE_TOKEN_TTL_MS } },
     { method: "tab.rename", params: { tab_id: "w1:t2", label: "⚡ 2" } },
     { method: "workspace.report_metadata", params: { workspace_id: "w1", source: SOURCE, tokens: { dev_servers: "⚡5176 5177" }, ttl_ms: TTL_MS } },
   ]);
   assert.deepEqual(memory.panes.get("w1:p2"), { original: null, written: "⚡ 5176 5177" });
+  assert.deepEqual(memory.paneTokens.get("w1:p2"), { token: "⚡5176 5177", writtenAt: 1000 });
   assert.deepEqual(memory.tabs.get("w1:t2"), { original: "2", written: "⚡ 2" });
   assert.deepEqual(memory.spaces.get("w1"), { token: "⚡5176 5177", writtenAt: 1000 });
 });
@@ -47,6 +58,10 @@ test("steady state produces no ops before RENEW_MS, and a renew op after", () =>
   const renewed = reconcile({ panes, tabs, portsByPane, memory: early.memory, now: 1000 + RENEW_MS });
   assert.deepEqual(renewed.ops, [reportOp("w1", "⚡5176")]);
   assert.deepEqual(renewed.memory.spaces.get("w1"), { token: "⚡5176", writtenAt: 1000 + RENEW_MS });
+
+  const paneRenewed = reconcile({ panes, tabs, portsByPane, memory: renewed.memory, now: 1000 + PANE_TOKEN_RENEW_MS });
+  assert.deepEqual(paneRenewed.ops, [paneTokenOp("w1:p2", "⚡5176"), reportOp("w1", "⚡5176")]);
+  assert.deepEqual(paneRenewed.memory.paneTokens.get("w1:p2"), { token: "⚡5176", writtenAt: 1000 + PANE_TOKEN_RENEW_MS });
 });
 
 test("changed ports rewrite the pane label and the token before RENEW_MS", () => {
@@ -56,9 +71,11 @@ test("changed ports rewrite the pane label and the token before RENEW_MS", () =>
   const { ops, memory } = reconcile({ panes, tabs, portsByPane, memory: badgedMemory(), now: 2000 });
   assert.deepEqual(ops, [
     { method: "pane.rename", params: { pane_id: "w1:p2", label: "⚡ 5176 5177" } },
+    paneTokenOp("w1:p2", "⚡5176 5177"),
     reportOp("w1", "⚡5176 5177"),
   ]);
   assert.deepEqual(memory.panes.get("w1:p2"), { original: null, written: "⚡ 5176 5177" });
+  assert.deepEqual(memory.paneTokens.get("w1:p2"), { token: "⚡5176 5177", writtenAt: 2000 });
   assert.deepEqual(memory.spaces.get("w1"), { token: "⚡5176 5177", writtenAt: 2000 });
 });
 
@@ -68,11 +85,13 @@ test("server stops: pane label back to null, tab back to original, token cleared
   const { ops, memory } = reconcile({ panes, tabs, portsByPane: new Map(), memory: badgedMemory(), now: 2000 });
   assert.deepEqual(ops, [
     { method: "pane.rename", params: { pane_id: "w1:p2", label: null } },
+    clearPaneTokenOp("w1:p2"),
     { method: "tab.rename", params: { tab_id: "w1:t2", label: "2" } },
     clearOp("w1"),
   ]);
-  assert.ok(ops[2]);
-  assert.equal("ttl_ms" in ops[2].params, false);
+  assert.ok(ops[1] && ops[3]);
+  assert.equal("ttl_ms" in ops[1].params, false);
+  assert.equal("ttl_ms" in ops[3].params, false);
   assert.deepEqual(memory, emptyMemory());
 });
 
@@ -110,6 +129,7 @@ test("tab renamed by user while badged keeps the new name and re-adds the badge"
   const stopped = reconcile({ panes, tabs: [{ tab_id: "w1:t2", workspace_id: "w1", label: "⚡ api" }], portsByPane: new Map(), memory: plainRename.memory, now: 3000 });
   assert.deepEqual(stopped.ops, [
     { method: "pane.rename", params: { pane_id: "w1:p2", label: null } },
+    clearPaneTokenOp("w1:p2"),
     { method: "tab.rename", params: { tab_id: "w1:t2", label: "api" } },
     clearOp("w1"),
   ]);
@@ -119,7 +139,7 @@ test("user rename without a badge after the server stops is not touched", () => 
   const panes = [{ pane_id: "w1:p2", tab_id: "w1:t2", workspace_id: "w1", label: "logs" }];
   const tabs = [{ tab_id: "w1:t2", workspace_id: "w1", label: "api" }];
   const { ops, memory } = reconcile({ panes, tabs, portsByPane: new Map(), memory: badgedMemory(), now: 2000 });
-  assert.deepEqual(ops, [clearOp("w1")]);
+  assert.deepEqual(ops, [clearPaneTokenOp("w1:p2"), clearOp("w1")]);
   assert.deepEqual(memory, emptyMemory());
 });
 
@@ -144,6 +164,7 @@ test("pane with a manual label keeps it after the ports", () => {
   });
   assert.deepEqual(morePorts.ops, [
     { method: "pane.rename", params: { pane_id: "w1:p2", label: "⚡ 5176 5177 | my pane" } },
+    paneTokenOp("w1:p2", "⚡5176 5177"),
     reportOp("w1", "⚡5176 5177"),
   ]);
   assert.deepEqual(morePorts.memory.panes.get("w1:p2"), { original: "my pane", written: "⚡ 5176 5177 | my pane" });
@@ -160,6 +181,8 @@ test("two panes in one tab: one tab badge, two pane labels, union token", () => 
   assert.deepEqual(ops, [
     { method: "pane.rename", params: { pane_id: "w1:p1", label: "⚡ 5176 5177" } },
     { method: "pane.rename", params: { pane_id: "w1:p2", label: "⚡ 3000 5176 | api" } },
+    paneTokenOp("w1:p1", "⚡5176 5177"),
+    paneTokenOp("w1:p2", "⚡3000 5176"),
     { method: "tab.rename", params: { tab_id: "w1:t1", label: "⚡ 1" } },
     reportOp("w1", "⚡3000 5176 5177"),
   ]);
@@ -181,6 +204,8 @@ test("spaces follow the order workspaces first appear in panes", () => {
   assert.deepEqual(ops, [
     { method: "pane.rename", params: { pane_id: "w2:p1", label: "⚡ 8080" } },
     { method: "pane.rename", params: { pane_id: "w1:p1", label: "⚡ 5176" } },
+    paneTokenOp("w2:p1", "⚡8080"),
+    paneTokenOp("w1:p1", "⚡5176"),
     { method: "tab.rename", params: { tab_id: "w1:t1", label: "⚡ 1" } },
     { method: "tab.rename", params: { tab_id: "w2:t1", label: "⚡ 1" } },
     reportOp("w2", "⚡8080"),
@@ -205,13 +230,14 @@ test("reconcile does not mutate the input memory", () => {
   assert.notEqual(memory.panes, input.panes);
   assert.notEqual(memory.tabs, input.tabs);
   assert.notEqual(memory.spaces, input.spaces);
+  assert.notEqual(memory.paneTokens, input.paneTokens);
 });
 
 test("restart with empty memory keeps live badges and only renews the token", () => {
   const panes = [{ pane_id: "w1:p2", tab_id: "w1:t2", workspace_id: "w1", label: "⚡ 5176" }];
   const tabs = [{ tab_id: "w1:t2", workspace_id: "w1", label: "⚡ 2" }];
   const { ops, memory } = reconcile({ panes, tabs, portsByPane: new Map([["w1:p2", [5176]]]), memory: emptyMemory(), now: 1000 });
-  assert.deepEqual(ops, [reportOp("w1", "⚡5176")]);
+  assert.deepEqual(ops, [paneTokenOp("w1:p2", "⚡5176"), reportOp("w1", "⚡5176")]);
   assert.deepEqual(memory, badgedMemory());
 });
 test("pane label decorated by another plugin is left alone while the ports are unchanged", () => {
