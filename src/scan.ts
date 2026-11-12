@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import path from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -52,13 +53,24 @@ export function parseLsofListeners(text: string): Listener[] {
   return listeners;
 }
 
-export function parsePsTree(text: string): Map<number, number> {
+export interface ProcessTree {
+  parentOf: Map<number, number>;
+  commandNameOf: Map<number, string>;
+}
+
+const PS_LINE = /^(\d+)\s+(\d+)\s*(.*)$/;
+
+export function parsePsTree(text: string): ProcessTree {
   const parentOf = new Map<number, number>();
+  const commandNameOf = new Map<number, string>();
   for (const line of text.split("\n")) {
-    const [pid, parentPid] = line.trim().split(/\s+/).map(Number);
-    if (pid !== undefined && parentPid !== undefined && Number.isInteger(pid) && Number.isInteger(parentPid)) parentOf.set(pid, parentPid);
+    const match = PS_LINE.exec(line.trim());
+    if (match === null) continue;
+    const [, pid, parentPid, command] = match;
+    parentOf.set(Number(pid), Number(parentPid));
+    if (command) commandNameOf.set(Number(pid), path.basename(command));
   }
-  return parentOf;
+  return { parentOf, commandNameOf };
 }
 
 export async function listListeners(runCommand: RunCommand = execFileAsync): Promise<Listener[]> {
@@ -72,9 +84,9 @@ export async function listListeners(runCommand: RunCommand = execFileAsync): Pro
   }
 }
 
-export async function listProcessTree(runCommand: RunCommand = execFileAsync): Promise<Map<number, number>> {
+export async function listProcessTree(runCommand: RunCommand = execFileAsync): Promise<ProcessTree> {
   try {
-    const { stdout } = await runCommand("ps", ["-A", "-o", "pid=,ppid="], { timeout: COMMAND_TIMEOUT_MS });
+    const { stdout } = await runCommand("ps", ["-A", "-o", "pid=,ppid=,comm="], { timeout: COMMAND_TIMEOUT_MS });
     return parsePsTree(stdout);
   } catch (error) {
     throw describeCommandFailure("ps", error);

@@ -72,10 +72,10 @@ async function refreshShellPids(panes: PaneSnapshot[]): Promise<Map<number, stri
 // A failed scan keeps the previous attribution, so labels and tokens stay consistent until lsof and ps answer again
 async function scanPorts(paneByShellPid: Map<number, string>): Promise<Map<string, number[]>> {
   try {
-    const [listeners, parentOf] = await Promise.all([listListeners(), listProcessTree()]);
+    const [listeners, processTree] = await Promise.all([listListeners(), listProcessTree()]);
     if (lastScanFailure !== null) log("scan recovered");
     lastScanFailure = null;
-    return attributePorts(listeners, parentOf, paneByShellPid);
+    return attributePorts(listeners, processTree, paneByShellPid);
   } catch (error) {
     const failure = describeError(error);
     if (failure !== lastScanFailure) log(`scan failed, keeping the last result: ${failure}`);

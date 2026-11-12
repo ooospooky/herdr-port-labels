@@ -9,8 +9,11 @@ test("parseLsofListeners handles ipv4, ipv6 and wildcard", () => {
     { pid: 58033, port: 8080 },
   ]);
 });
-test("parsePsTree maps pid to ppid", () => {
-  assert.deepEqual([...parsePsTree("  1     0\n 2050     1\n41783  2050\n")], [[1, 0], [2050, 1], [41783, 2050]]);
+test("parsePsTree maps pid to ppid and to the command's base name", () => {
+  const text = "  1     0 /sbin/launchd\n 2050     1 -zsh\n15660  2050 /Users/me/.local/bin/claude\n12759 37020 /Applications/Google Chrome.app/Contents/MacOS/Google Chrome Helper (Renderer)\n";
+  const { parentOf, commandNameOf } = parsePsTree(text);
+  assert.deepEqual([...parentOf], [[1, 0], [2050, 1], [15660, 2050], [12759, 37020]]);
+  assert.deepEqual([...commandNameOf], [[1, "launchd"], [2050, "-zsh"], [15660, "claude"], [12759, "Google Chrome Helper (Renderer)"]]);
 });
 test("listListeners returns no listeners when lsof exits 1 with empty output", async () => {
   const lsofNoMatch: RunCommand = async () => {

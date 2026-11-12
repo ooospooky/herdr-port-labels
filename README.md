@@ -4,7 +4,7 @@ See which herdr Space, tab, and pane has a dev server running: ⚡ on the tab, t
 
 ![herdr with the plugin installed. The sidebar lists the ports of each Space, the dev tab carries a ⚡, and each split pane shows its port on the border.](docs/screenshot.png)
 
-Any TCP listener started from a pane counts, whatever the command: `vite`, `next dev`, `rails server`, `ssh -L`, `kubectl port-forward`, `node --inspect`. Servers that an agent such as Claude Code starts inside its pane count too. The plugin only displays. It never stops a process.
+Any TCP listener started from a pane counts, whatever the command: `vite`, `next dev`, `rails server`, `ssh -L`, `kubectl port-forward`, `node --inspect`. Servers that an agent such as Claude Code starts inside its pane count too, but the localhost port Claude Code opens for itself in every session does not. The plugin only displays. It never stops a process.
 
 ## Install
 
